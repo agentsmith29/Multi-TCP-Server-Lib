@@ -67,7 +67,9 @@ namespace mServer{
 
         int registerWorkerThread(int socket_descriptor);
 
-        int deregisterWorkerThread(); // Work pending
+        int updateWorkerRegistry(); // Work pending
+
+        int refreshDescriptorFileset();
 
 
 

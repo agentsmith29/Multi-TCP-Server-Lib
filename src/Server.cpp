@@ -30,7 +30,7 @@ using std::cout;
 using std::endl;
 
 #define workerholder std::list<std::pair<std::unique_ptr<ServerWorker>, int>>
-workerholder _server_workers; // point
+workerholder _server_worker_registry; // point
 // er/id
 
 Server::Server(int port){
@@ -189,22 +189,9 @@ int Server::startListening() {
             }
         }
         else {
-            for (auto &server_worker : _server_workers) {
-
-                if (FD_ISSET(server_worker.first->notification_fds(), &_readfds)) {
-                    valread = read(server_worker.first->notification_fds(), buffer, 1024);
-                    _logger->debug("Worker {0} notified: {1}", server_worker.first->worker_id(), buffer);
-                    buffer[0] = '\0';
-                }
-
-                if (server_worker.first->hasEnded()) {
-                     _server_workers.remove(server_worker);
-                    FD_CLR(server_worker.first->notification_fds(), &_readfds);
-                    break;
-                }
-            }
+            updateWorkerRegistry();
         }
-        _logger->debug("Running Services: {0}", _server_workers.size());
+        _logger->debug("Running Services: {0}", _server_worker_registry.size());
 
 
     }
@@ -216,57 +203,89 @@ int Server::startListening() {
 int Server::registerWorkerThread(int socket_descriptor) {
 
     // TODO: Substitute with generated ID
-    int worker_id = _server_workers.size()+1;
+    int worker_id = _server_worker_registry.size() + 1;
 
     // Create a new Pointer to a ServerWorker
     auto requestHandler = std::make_unique<ServerWorker>(worker_id, socket_descriptor, _address);
 
     //
-    int notificationDescriptor = requestHandler->notification_fds();
 
+    _server_worker_registry.push_back(std::make_pair(std::move(requestHandler), worker_id) );
+    _logger->info("Registered socket descriptor {0} for worker {1}", socket_descriptor, worker_id);
+
+    //clear the socket set and again add the workers stored in the registry
+    refreshDescriptorFileset();
+
+
+
+
+
+
+    return 0;
+}
+
+int Server::updateWorkerRegistry() {
+    int valread;
+    char buffer[1024];
+
+    workerholder::iterator server_worker = _server_worker_registry.begin();
+    while (server_worker != _server_worker_registry.end()) {
+
+        if (FD_ISSET((*server_worker).first->notification_fds(), &_readfds)) {
+            valread = read((*server_worker).first->notification_fds(), buffer, 1024);
+            _logger->debug("Worker {0} notified: {1}", (*server_worker).first->worker_id(), buffer);
+            buffer[0] = '\0';
+        }
+
+        bool hasEnded = (*server_worker).first->hasEnded();
+        int notification_fds = (*server_worker).first->notification_fds();
+        int worker_id = (*server_worker).first->worker_id();
+
+        if (hasEnded) {
+            _logger->error("Deregister worker for socket {0}", worker_id);
+            //clear the socket set and again add the workers stored in the registry
+            _server_worker_registry.erase(server_worker++);
+        }
+        else
+            ++server_worker;
+    }
+
+    refreshDescriptorFileset();
+    return 0;
+}
+
+int Server::refreshDescriptorFileset(){
+
+    _logger->debug("Refreshing registry.");
     //clear the socket set
     FD_ZERO(&_readfds);
 
     // Reregister the master socket
     FD_SET(_master_socket, &_readfds);
-    _max_sd = notificationDescriptor;
+        _max_sd = _master_socket;
 
     // Reregister previous opened sockets
-    for (auto& server_worker : _server_workers) {
-        if (server_worker.first->hasEnded()) {
-            FD_SET(server_worker.first->notification_fds(), &_readfds);
+    for (auto& server_worker : _server_worker_registry) {
 
-            if(server_worker.first->notification_fds() > _max_sd)
-                _max_sd = notificationDescriptor;
+        bool hasEnded = server_worker.first->hasEnded();
+        int notification_fd = server_worker.first->notification_fds();
+        int worker_id = server_worker.first->worker_id();
+
+        if (!hasEnded) {
+            FD_SET(notification_fd, &_readfds);
+
+            if(notification_fd > _max_sd)
+                _max_sd = notification_fd;
+
+            _logger->debug("Added worker {0} with file set {1} to registry.", worker_id, notification_fd);
         }
         else {
-            _logger->info("Worker {0} has ended. Removing the worker.", server_worker.first->worker_id());
-            // TODO Remove the worker
+            _logger->info("Worker {0} seems to be stopped! Omitting.", worker_id);
         }
     }
 
-
-    // Now we can register the new descriptor
-    FD_SET(notificationDescriptor, &_readfds);
-
-    if(notificationDescriptor > _max_sd)
-        _max_sd = notificationDescriptor;
-
-
-
-    _server_workers.push_back(std::make_pair(std::move(requestHandler), worker_id) );
-    _logger->info("Registered socket descriptor {0} for worker {1}", socket_descriptor, worker_id);
-
-
     return 0;
-}
-
-int Server::deregisterWorkerThread() {
-
-
-    return 0;
-}
-
+};
 int Server::acceptNewIncomingRequest(){
 
     int new_socket = 0;

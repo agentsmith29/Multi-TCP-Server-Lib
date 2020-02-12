@@ -115,6 +115,7 @@ int ServerWorker::initWorker(){
     t.detach();
     _logger->info("Worker {0} has started. Ready for incoming connections.", _worker_id);
 
+    _done = false;
     return 0;
 }
 
@@ -146,6 +147,7 @@ int ServerWorker::serve(std::atomic<bool> &done) {
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
     while(true) {
         //
+        done = false;
         activity_on_descriptor = select(_socket_fd + 1, &_readfds,  NULL , NULL , NULL);
 
         if ((activity_on_descriptor < 0) && (errno!=EINTR)) {
