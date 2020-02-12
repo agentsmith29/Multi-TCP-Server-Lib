@@ -29,7 +29,8 @@ namespace mServer{
                 return _socket_descriptor;
             };
 
-            ~ServerWorker();
+
+        ~ServerWorker();
 
         private:
             std::string _logger_name = "Generic Logger";

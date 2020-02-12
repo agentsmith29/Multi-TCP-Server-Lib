@@ -157,7 +157,6 @@ int Server::initMasterSocket(){
     return _master_socket;
 }
 
-
 int Server::startListening() {
 
     //set of socket descriptors
@@ -170,13 +169,14 @@ int Server::startListening() {
     while(true) {
               // wait for an activity on one of the sockets , timeout is NULL ,
         // so wait indefinitely
-        activity_on_descriptor = select( _max_sd + 1 , &_readfds , NULL , NULL , NULL);
+        activity_on_descriptor = select( _master_socket + 1 , &_readfds , NULL , NULL , NULL);
 
+        //logger->debug("Running Services: {0}", _server_workers.size());
         if ((activity_on_descriptor < 0) && (errno!=EINTR)) {
             _logger->error("Select error: {0}. Code {1}.", strerror(errno), errno);
         }
         else{
-            _logger->debug("Event received on socket {0}", activity_on_descriptor);
+            _logger->debug("Event received on file set {0}", activity_on_descriptor);
         }
         // If something happened on the master socket ,
         // then its an incoming connection
@@ -186,6 +186,7 @@ int Server::startListening() {
             if(new_socket > 0) {
 
                 int worker_id = _server_workers.size()+1;
+
                 auto requestHandler = std::make_unique<ServerWorker>(worker_id, new_socket, _address);
 
                 _server_workers.push_back(std::make_pair(std::move(requestHandler), worker_id) );
@@ -195,13 +196,19 @@ int Server::startListening() {
 
         }
 
-        _logger->debug("Running Services: {0}", _server_workers.size());
+        workerholder::iterator i = _server_workers.begin();
+        while (i != _server_workers.end()) {
 
-        for (auto& server_worker : _server_workers) {
-                if (server_worker.first->hasEnded())
-                    _server_workers.remove(server_worker);
-                    break;
+            bool hasEnded = (*i).first->hasEnded();
+            if (hasEnded) {
+                _logger->error("Deregister socket descriptor {0}", (*i).first->getSocketDescriptor());
+                _server_workers.erase(i++);  // alternatively, i = items.erase(i);
+            }
+            else
+                ++i;
         }
+
+
 
 
 
