@@ -188,6 +188,11 @@ int Server::startListening() {
                 int worker_id = _server_workers.size()+1;
                 auto requestHandler = std::make_unique<ServerWorker>(worker_id, new_socket, _address);
 
+                FD_SET(requestHandler->getNotificationDescriptor(), &_readfds);
+                _logger->error("Added Pipe: {0}", requestHandler->getNotificationDescriptor());
+                if(requestHandler->getNotificationDescriptor() > _max_sd)
+                    _max_sd = requestHandler->getNotificationDescriptor();
+                
                 _server_workers.push_back(std::make_pair(std::move(requestHandler), worker_id) );
 
                 _logger->error("Registered socket descriptor {0}", new_socket);

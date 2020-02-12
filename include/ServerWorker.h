@@ -29,10 +29,14 @@ namespace mServer{
                 return _socket_descriptor;
             };
 
+            int getNotificationDescriptor();
+
             ~ServerWorker();
 
         private:
             std::string _logger_name = "Generic Logger";
+
+            int _fd[2];
 
             int _socket_descriptor = 0;
 

@@ -16,6 +16,9 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
+ #include <stdio.h>
+#include <unistd.h>
+#include <sys/types.h>
 
 using namespace mServer;
 using std::exception;
@@ -46,6 +49,11 @@ int ServerWorker::createLogger(){
 
 }
 
+int ServerWorker::getNotificationDescriptor() {
+
+    return _fd[0];
+}
+
 ServerWorker::ServerWorker(int worker_id, int socket_descriptor, struct sockaddr_in &address){
 
     _socket_descriptor = socket_descriptor;
@@ -54,6 +62,7 @@ ServerWorker::ServerWorker(int worker_id, int socket_descriptor, struct sockaddr
     createLogger();
     _logger->debug("Worker {0} for descriptor {1} ist warming up...", _worker_id, _socket_descriptor);
 
+    pipe(_fd);
 
     _address = address;
     //clear the socket set
@@ -155,5 +164,8 @@ int ServerWorker::handleDisconnectClientRequest() {
 }
 
 ServerWorker::~ServerWorker() {
+    write(_fd[1], "end", (strlen("end")+1));
+    close(_fd[0]);
+    close(_fd[1]);
     _logger->debug("Worker {0} destroyed!", _worker_id);
 }
