@@ -174,6 +174,7 @@ int Server::startListening() {
 
         if ((activity_on_descriptor < 0) && (errno!=EINTR)) {
             _logger->error("Select error: {0}. Code {1}.", strerror(errno), errno);
+            return 0;
         }
         else{
             _logger->debug("Event received on socket {0}", activity_on_descriptor);
@@ -184,57 +185,85 @@ int Server::startListening() {
             int new_socket = acceptNewIncomingRequest();
             // A new Request has been made, spwan a Server Receiver
             if(new_socket > 0) {
-
-                int worker_id = _server_workers.size()+1;
-                auto requestHandler = std::make_unique<ServerWorker>(worker_id, new_socket, _address);
-
-                FD_SET(requestHandler->getNotificationDescriptor(), &_readfds);
-                _logger->error("Added Pipe: {0}", requestHandler->getNotificationDescriptor());
-                if(requestHandler->getNotificationDescriptor() > _max_sd)
-                    _max_sd = requestHandler->getNotificationDescriptor();
-                
-                _server_workers.push_back(std::make_pair(std::move(requestHandler), worker_id) );
-
-                _logger->error("Registered socket descriptor {0}", new_socket);
+                registerWorkerThread(new_socket);
             }
-
         }
+        else {
+            for (auto &server_worker : _server_workers) {
 
-        _logger->debug("Running Services: {0}", _server_workers.size());
+                if (FD_ISSET(server_worker.first->notification_fds(), &_readfds)) {
+                    valread = read(server_worker.first->notification_fds(), buffer, 1024);
+                    _logger->debug("Worker {0} notified: {1}", server_worker.first->worker_id(), buffer);
+                    buffer[0] = '\0';
+                }
 
-        for (auto& server_worker : _server_workers) {
-                if (server_worker.first->hasEnded())
-                    _server_workers.remove(server_worker);
+                if (server_worker.first->hasEnded()) {
+                     _server_workers.remove(server_worker);
+                    FD_CLR(server_worker.first->notification_fds(), &_readfds);
                     break;
-        }
-
-
-
-
-       /* else {
-            for (int i = 0; i < _maximum_clients; i++) {
-                sd = _client_socket[i];
-                if (FD_ISSET(sd, &readfds)) {
-                    if ((valread = read(sd, buffer, 1024)) == 0) {
-                        // Somebody disconnected , get his details and print
-                        _logger->debug("Received disconnect command from client with descriptor {0}", sd);
-                        handleDisconnectClientRequest(sd, i);
-                    } else{
-                        // Echo back the message that came in set the string terminating NULL byte
-                        // on the end of the data read
-                        buffer[valread] = '\0';
-                        _logger->debug("Received {0} from client with descriptor {1}", buffer, sd);
-                        //sendMessage(sd , buffer);
-                    }
                 }
             }
+        }
+        _logger->debug("Running Services: {0}", _server_workers.size());
 
-        } */
-
-        // else its some IO operation on some other socket
 
     }
 #pragma clang diagnostic pop
+    return 0;
+}
+
+
+int Server::registerWorkerThread(int socket_descriptor) {
+
+    // TODO: Substitute with generated ID
+    int worker_id = _server_workers.size()+1;
+
+    // Create a new Pointer to a ServerWorker
+    auto requestHandler = std::make_unique<ServerWorker>(worker_id, socket_descriptor, _address);
+
+    //
+    int notificationDescriptor = requestHandler->notification_fds();
+
+    //clear the socket set
+    FD_ZERO(&_readfds);
+
+    // Reregister the master socket
+    FD_SET(_master_socket, &_readfds);
+    _max_sd = notificationDescriptor;
+
+    // Reregister previous opened sockets
+    for (auto& server_worker : _server_workers) {
+        if (server_worker.first->hasEnded()) {
+            FD_SET(server_worker.first->notification_fds(), &_readfds);
+
+            if(server_worker.first->notification_fds() > _max_sd)
+                _max_sd = notificationDescriptor;
+        }
+        else {
+            _logger->info("Worker {0} has ended. Removing the worker.", server_worker.first->worker_id());
+            // TODO Remove the worker
+        }
+    }
+
+
+    // Now we can register the new descriptor
+    FD_SET(notificationDescriptor, &_readfds);
+
+    if(notificationDescriptor > _max_sd)
+        _max_sd = notificationDescriptor;
+
+
+
+    _server_workers.push_back(std::make_pair(std::move(requestHandler), worker_id) );
+    _logger->info("Registered socket descriptor {0} for worker {1}", socket_descriptor, worker_id);
+
+
+    return 0;
+}
+
+int Server::deregisterWorkerThread() {
+
+
     return 0;
 }
 
@@ -263,18 +292,7 @@ int Server::acceptNewIncomingRequest(){
                        inet_ntoa(_address.sin_addr), ntohs(_address.sin_port));
 
     return new_socket;
-/*
-    //add new socket to array of sockets
-    for (int i = 0; i < _maximum_clients; i++)
-    {
-        //if position is empty
-        if( _client_socket[i] == 0 )
-        {
-            _client_socket[i] = new_socket;
-            break;
-        }
-    }
-*/
+
 }
 
 int Server::handleDisconnectClientRequest(int socket_descriptor, int client_socket_position) {
@@ -294,7 +312,7 @@ int Server::handleDisconnectClientRequest(int socket_descriptor, int client_sock
     close(socket_descriptor);
     // Set the socket at the given position to zero
     _client_socket[client_socket_position] = 0;
-
+    return 0;
 }
 
 

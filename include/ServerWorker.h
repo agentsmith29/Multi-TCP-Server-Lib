@@ -14,51 +14,66 @@
 #include <thread>
 #include <chrono>
 #include <netinet/in.h>
+#include "Notifications.h"
 
 namespace mServer{
 
 
     class ServerWorker {
 
-        public:
-            ServerWorker(int worker_id, int socket_descriptor, struct sockaddr_in &address);
+    public:
 
-            bool hasEnded();
+        // Constructor
+        ServerWorker(int worker_id, int socket_fd, struct sockaddr_in &address);
 
-            int getSocketDescriptor() {
-                return _socket_descriptor;
-            };
+        bool hasEnded();
 
-            int getNotificationDescriptor();
+        int initWorker();
 
-            ~ServerWorker();
 
-        private:
-            std::string _logger_name = "Generic Logger";
+        // Getter
+        int socket_fds() { return _socket_fd; };
 
-            int _fd[2];
+        int notification_fds() { return _notification_fd[0]; };
 
-            int _socket_descriptor = 0;
+        int worker_id() { return _worker_id; };
 
-            std::atomic<bool> _done;
+        // Destructor
+        ~ServerWorker();
 
-            int _worker_id = 0;
+    private:
+        std::string _logger_name = "Generic Logger";
 
-            fd_set _readfds;
+        // Initialize with 0,0
+        int _notification_fd[2] = {0, 0};
+        // ID of the worker
+        int _worker_id = 0;
 
-            int createLogger();
+        // Initialize with 0
+        std::atomic<int> _socket_fd{0};
 
-            //
-            int serve(std::atomic<bool> &done);
+        // For determining if a thread has ended.
+        std::atomic<bool> _done{false};
 
-            int handleDisconnectClientRequest();
+        // For logging any kind of messages
+        std::shared_ptr<spdlog::logger> _logger;
 
-            // For logging any kind of messages
-            std::shared_ptr<spdlog::logger> _logger;
+        fd_set _readfds;
 
-            //
+        struct sockaddr_in _address;
 
-            struct sockaddr_in _address;
+        std::mutex _lock_disconnect;
+
+        std::mutex _lock_notify;
+
+
+        int createLogger();
+
+        int serve(std::atomic<bool> &done);
+
+        int handleDisconnectClientRequest();
+
+        int notifiyMaster(std::string message);
 
     };
 }
