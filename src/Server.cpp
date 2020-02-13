@@ -4,7 +4,6 @@
 #include "../include/Server.h"
 #include "../include/ServerWorker.h"
 #include "../include/ServerMessage.h"
-
 // Files for Logging
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
@@ -20,7 +19,6 @@
 #include <string>
 #include <memory>
 #include <list>
-
 // for multiple threads
 #include <thread>
 #include "../include/Utils.h"
@@ -36,10 +34,8 @@ using std::endl;
 workerholder _server_worker_registry; // point
 // er/id
 
-Server::Server(int port){
+int Server::createMessage(){
 
-    lock_message_access.lock();
-    // Create the logger
     try {
         // Creating loggers with multiple sinks
         // see: https://github.com/gabime/spdlog/wiki/2.-Creating-loggers
@@ -49,20 +45,29 @@ Server::Server(int port){
         _logger = std::make_shared<spdlog::logger>("TCP Server Master", begin(sinks), end(sinks));
         //register it if you need to access it globally
         spdlog::register_logger(_logger);
-        spdlog::set_level(spdlog::level::debug); // Set global log level to debug
+        _logger->set_level(spdlog::level::debug); // Set global log level to debug
         spdlog::set_pattern("[%H:%M:%S] [%n] [%^%l%$] %v");
     }
     catch(exception &ex){
-        cout << ex.what() << endl;
+        cout << "Logger creation Error: " << ex.what() << endl;
+        return -1;
     }
+    return 0;
+}
 
+Server::Server(int port){
 
+    lock_message_access.lock();
+
+    // Create the logger
+    createMessage();
 
     _logger->info("Starting server instance.");
 
     _client_socket = new int[_maximum_clients];
+
     if(_client_socket == nullptr){
-        _logger->error("Client Socket array o allocated! Aborting server initialization.", port);
+        _logger->error("Client Socket array failed allocating! Aborting server initialization.", port);
         throw std::bad_alloc();
     }
 
@@ -76,15 +81,10 @@ Server::Server(int port){
 
 
     _logger->info("Opening communication socket on port {0}.", _binding_port);
+    _master_socket = initMasterSocket();
 
-    int result = initMasterSocket();
-
-    if(result < 0){
-        throw ServerNotInitException;
-    }
-
-    if (_master_socket <= 0) {
-        _logger->error("TCP Server not initialized properly. Exiting.", port);
+    if(_master_socket <= 0){
+        _logger->error("Not initialized properly. Master socket file descriptor was {0}. Exiting.", _master_socket);
         throw ServerNotInitException;
     }
 
@@ -93,14 +93,11 @@ Server::Server(int port){
 
     // Detach the thread
     t.detach();
-    // startListening();
-    // startListening_1();
-
-
-
 }
 
 int Server::initMasterSocket(){
+
+    int master_socket = 0;
 
     int opt = true;
 
@@ -114,24 +111,18 @@ int Server::initMasterSocket(){
     _address.sin_port = htons(_binding_port);
 
 
-
     //create a master socket
-    _master_socket = socket(_address.sin_family, SOCK_STREAM, 0);
-
-
-
-    if (_master_socket == 0) {
-        _logger->error("Socket creation failed: {0}. Code {1}.", strerror(errno), errno);
-        return -2;
+    master_socket = socket(_address.sin_family, SOCK_STREAM, 0);
+    if (master_socket == 0) {
+        _logger->error("Master socket creation failed: {0}. Code {1}.", strerror(errno), errno);
     }
     else {
         _logger->debug("Allocating socket descriptor {0}: type {1}, protocol 0.", _master_socket, SOCK_STREAM);
     }
 
-
     // set master socket to allow multiple connections ,
     // this is just a good habit, it will work without this
-    if(setsockopt(_master_socket, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt)) < 0 ) {
+    if(setsockopt(master_socket, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt)) < 0 ) {
         _logger->error("Set socket options failed: {0}. Code {1}.", strerror(errno), errno);
         return -3;
     }
@@ -142,17 +133,16 @@ int Server::initMasterSocket(){
 
 
     // bind the socket to localhost and given port
-    if (bind(_master_socket, (struct sockaddr *)&_address, sizeof(_address)) < 0)
-    {
+    if (bind(master_socket, (struct sockaddr *)&_address, sizeof(_address)) < 0) {
         _logger->error("Socket binding failed: {0}. Code {1}.", strerror(errno), errno);
         return -4;
     }
     else {
-        _logger->debug("Listener on Port {0}.", _binding_port);
+        _logger->info("Socket bound, listening on Port {0}.", _binding_port);
     }
 
-    //Specify maximum of 5 pending connections for the master socket
-    if (listen(_master_socket, _maximum_clients) < 0) {
+    // Specify maximum of 5 pending connections for the master socket
+    if (listen(master_socket, _maximum_clients) < 0) {
         _logger->error("Error listen: {0}. Code {1}.", strerror(errno), errno);
     }
 
@@ -160,15 +150,15 @@ int Server::initMasterSocket(){
     FD_ZERO(&_readfds);
 
     //add master socket to set
-    FD_SET(_master_socket, &_readfds);
+    FD_SET(master_socket, &_readfds);
     //max_sd = _master_socket;
-    if(_master_socket > _max_sd)
-        _max_sd = _master_socket;
+    if(master_socket > _max_sd)
+        _max_sd = master_socket;
 
 
-    _logger->info("Initialized, ready for incoming connections.");
+    _logger->info("Initialized. Ready for incoming connections.");
 
-    return _master_socket;
+    return master_socket;
 }
 
 
@@ -177,27 +167,24 @@ int Server::startListening() {
     //set of socket descriptors
     int activity_on_descriptor = 0, valread = 0;
 
-    char buffer[2048];
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
+
     while(true) {
-              // wait for an activity on one of the sockets , timeout is NULL ,
-        // so wait indefinitely
-        activity_on_descriptor = select( _max_sd + 1 , &_readfds , NULL , NULL , NULL);
+        // wait for an activity on one of the sockets , timeout is NULL ,so wait indefinitely
+        activity_on_descriptor = select( _max_sd + 1 , &_readfds ,
+                NULL , NULL , NULL);
 
         if ((activity_on_descriptor < 0) && (errno!=EINTR)) {
             _logger->error("Select error: {0}. Code {1}.", strerror(errno), errno);
-            return 0;
+            return -1;
         }
-        else{
-            _logger->debug("Event received on socket {0}", activity_on_descriptor);
-        }
-        // If something happened on the master socket ,
-        // then its an incoming connection
+        // If something happened on the master socket, then its an incoming connection
         if (FD_ISSET(_master_socket, &_readfds)) {
+            _logger->debug("Event on Master ({0}) received: Processing incoming connection...", activity_on_descriptor);
             int new_socket = acceptNewIncomingRequest();
-            // A new Request has been made, spwan a Server Receiver
+            // A new Request has been made, spwan a Server Worker
             if(new_socket > 0) {
                 registerWorkerThread(new_socket);
             }
@@ -307,23 +294,23 @@ int Server::acceptNewIncomingRequest(){
     int addrlen = sizeof(_address);
 
     new_socket = accept(_master_socket, (struct sockaddr *)&_address, (socklen_t*)&addrlen);
-
     if (new_socket < 0) {
         _logger->error("Accepting new client error: {0}. Code {1}.", strerror(errno), errno);
         return -1;
     }
 
     // inform user of socket number - used in send and receive commands
-    _logger->info("New incoming connection from IP {0}, on port {1}. Socket descriptor is {2} , " ,
+    _logger->info("New incoming connection from IP {0}, on port {1}. Socket descriptor is {2} " ,
             inet_ntoa(_address.sin_addr),
             ntohs(_address.sin_port),
             new_socket);
 
-    // Send message
-    std::string message = "ECHO TCP Server v0.1 \r\n";
-    if(sendMessage(new_socket, message) < 0)
-        _logger->error("Can't send message to client {0}:{1}",
-                       inet_ntoa(_address.sin_addr), ntohs(_address.sin_port));
+    // Send message if it ist not zero
+    if (std::strcmp(_welcome_message.c_str(), "")) {
+        if (sendMessage(new_socket, _welcome_message) < 0)
+            _logger->error("Can't send message to client {0}:{1}",
+                           inet_ntoa(_address.sin_addr), ntohs(_address.sin_port));
+    }
 
     return new_socket;
 
@@ -354,9 +341,9 @@ int Server::handleDisconnectClientRequest(int socket_descriptor, int client_sock
 
 int Server::sendMessage(int socket_descriptor, std::string message){
     //send new connection greeting message
-    _logger->debug("Sending {0} to client with descriptor {1}", trim(message), socket_descriptor);
-    if(send(socket_descriptor, message.c_str(), message.length(), 0) != message.length() )
-    {
+    _logger->debug("Sending message <{0}> to client with descriptor {1}",
+            trim(message), socket_descriptor);
+    if(send(socket_descriptor, message.c_str(), message.length(), 0) != message.length() ) {
         _logger->error("Sending message failed: {0}. Code {1}.", strerror(errno), errno);
         return -1;
     }
@@ -392,8 +379,7 @@ void Server::message_pop() {
 
 void Server::waitForMessage(){
     lock_message_access.lock();
-    _logger->info("Locked, messages in buffer: {0}", _message_registry.size());
-    //cond_message_access.wait(lock);
+    _logger->debug("Consumed message. Messages in buffer left: {0}", _message_registry.size());
     lock_message_access.unlock();
 }
 

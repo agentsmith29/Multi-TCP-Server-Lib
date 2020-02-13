@@ -16,6 +16,8 @@ using std::endl;
 using std::exception;
 
 int main() {
+
+
     Server *communicationServer;
 
     try {
@@ -25,6 +27,7 @@ int main() {
         cout << e.what() << endl;
     }
 
+    communicationServer->setWelcomeMessage("TCP Echo Server V0.1");
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
@@ -33,7 +36,7 @@ int main() {
         communicationServer->waitForMessage();
         try {
             auto svr_pop = communicationServer->message_front();
-            cout << "Replaying to message <" << svr_pop->content() << ">" << std::endl;
+            //cout << "Replaying to message <" << svr_pop->content() << ">" << std::endl;
             // Directly echo back
             std::string respond = "Received: " + svr_pop->content() + "\n";
             svr_pop->respond(respond); // This will release the lock!

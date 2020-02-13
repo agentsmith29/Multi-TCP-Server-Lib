@@ -16,9 +16,7 @@
 using  namespace mServer;
 
 ServerMessage::ServerMessage(ServerWorker *parentalWorker, const std::string &msg) {
-
-    std::cout << msg << std::endl;
-    // Assign a timestampe to the message
+     // Assign a timestampe to the message
     _time_stamp = time(0);
     // Create a unique message ID
     generateMessageID();
@@ -72,31 +70,23 @@ std::string ServerMessage::generateMessageID(){
     std::string id;
     boost::uuids::random_generator gen;
     _message_id = gen();
-    std::cout << "ID:" << _message_id << std::endl;
     return boost::lexical_cast<std::string>(_message_id);
-    //std::tm * ptm = std::localtime(&_time_stamp);
-    //char buffer[32];
-    // Format: Mo, 15.06.2009 20:20:00
-    //std::strftime(buffer, 32, "%d%m%Y-%H%M%S", ptm);
-    // Worst Case: 31129999235959
-    // int         ****2147483647
-
-    //id = _time_stamp;
-    //return id;
 }
 
 std::string ServerMessage::timestamp_str(){
-    std::string timestamp;
+    std::stringstream ss;
+
     std::tm * ptm = std::localtime(&_time_stamp);
     char buffer[32];
     // Format: Mo, 15.06.2009 20:20:00
     std::strftime(buffer, 32, "%d%m%Y-%H%M%S", ptm);
+    ss << buffer;
 
-    return timestamp;
+    return ss.str();
 
 };
 
 
 ServerMessage::~ServerMessage() {
-    std::cout << "Destroyed message."<< std::endl;
+
 }

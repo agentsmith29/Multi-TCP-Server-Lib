@@ -27,6 +27,7 @@ namespace mServer{
 
         PortNotValid PortNotValidException;
         ServerNotInit ServerNotInitException;
+        //MasterSocketInitFail MasterSocketInitFailException;
         DescriptorInvalid DescriptorInvalidException;
         MsgRegistryEmtpy MsgRegistryEmtpyException;
 
@@ -42,6 +43,8 @@ namespace mServer{
 
         sockaddr_in *address() {return &_address; };
 
+        // Setters
+        void setWelcomeMessage(std::string msg) { _welcome_message = msg; };
 
         // Access the message registry
         int message_push(std::shared_ptr<ServerMessage> msg);
@@ -55,6 +58,7 @@ namespace mServer{
         ~Server();
     private:
 
+        std::string _welcome_message = "ECHO TCP Server v0.1";
         // For logging any kind of messages
         std::shared_ptr<spdlog::logger> _logger;
 
@@ -87,6 +91,7 @@ namespace mServer{
 
         std::queue<std::shared_ptr<ServerMessage>> _message_registry;
 
+        int createMessage();
 
         // Initialize the master socket for accepting incoming requests
         int initMasterSocket();
