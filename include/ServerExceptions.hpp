@@ -96,6 +96,21 @@ namespace mServer {
 
     };
 
+    class MsgRegistryEmtpy: public exception {
+
+            virtual const char *what() const throw() {
+                return "No messages to read, message buffer is empty!";
+            }
+
+            virtual const int errID() const throw() {
+                return -6;
+            }
+
+            virtual const char *errDesc() const throw() {
+                return "ERR_MSG_REGISTRY_IST_EMPTY";
+            }
+
+    };
 
 
 

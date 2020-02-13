@@ -38,6 +38,7 @@ workerholder _server_worker_registry; // point
 
 Server::Server(int port){
 
+    lock_message_access.lock();
     // Create the logger
     try {
         // Creating loggers with multiple sinks
@@ -87,7 +88,12 @@ Server::Server(int port){
         throw ServerNotInitException;
     }
 
-    startListening();
+    // Starting the listener
+    std::thread t(&Server::startListening, this);
+
+    // Detach the thread
+    t.detach();
+    // startListening();
     // startListening_1();
 
 
@@ -200,7 +206,8 @@ int Server::startListening() {
             updateWorkerRegistry();
         }
         _logger->debug("Running Services: {0}", _server_worker_registry.size());
-
+        if( _server_worker_registry.empty())
+            exit(0);
 
     }
 #pragma clang diagnostic pop
@@ -357,21 +364,38 @@ int Server::sendMessage(int socket_descriptor, std::string message){
 }
 
 int Server::message_push(std::shared_ptr<ServerMessage> msg) {
-    _lock_message_registry.lock();
+    lock_message_access.unlock();
+    std::unique_lock<std::mutex> lock(_lock_message_registry);
+
     _logger->info("New message {0}-{1} ready for consumption.", msg->timestamp_str(), msg->messageID_str());
     _message_registry.push(std::move(msg));
-    _lock_message_registry.unlock();
+    cond_message_access.notify_one();
     return 0;
 }
 
-std::shared_ptr<ServerMessage> Server::message_pop() {
-    _lock_message_registry.lock();
+std::shared_ptr<ServerMessage> Server::message_front() {
+    std::unique_lock<std::mutex> lock(_lock_message_registry);
+
+    if(_message_registry.empty())
+        throw MsgRegistryEmtpyException;
     auto res =_message_registry.front(); // **************
-    _message_registry.pop();
-    _lock_message_registry.unlock();
-   return res;
+    return res;
 }
 
+void Server::message_pop() {
+    std::unique_lock<std::mutex> lock(_lock_message_registry  );
+    _message_registry.pop(); // **************
+    if(_message_registry.empty())
+        lock_message_access.lock();
+}
+
+
+void Server::waitForMessage(){
+    lock_message_access.lock();
+    _logger->info("Locked, messages in buffer: {0}", _message_registry.size());
+    //cond_message_access.wait(lock);
+    lock_message_access.unlock();
+}
 
 
 

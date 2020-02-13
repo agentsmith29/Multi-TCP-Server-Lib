@@ -28,28 +28,30 @@ namespace mServer{
         PortNotValid PortNotValidException;
         ServerNotInit ServerNotInitException;
         DescriptorInvalid DescriptorInvalidException;
+        MsgRegistryEmtpy MsgRegistryEmtpyException;
 
 
     public:
         Server(int port);
 
-        // Initialize the master socket for accepting incoming requests
-        int initMasterSocket();
-
-        int startListening();
-
+        //TODO: Delete
         int startListening_1();
 
-        // Getter
+        // Getters
         int master_socket_fd() {return _master_socket; };
 
-        // Getter
         sockaddr_in *address() {return &_address; };
 
+
+        // Access the message registry
         int message_push(std::shared_ptr<ServerMessage> msg);
 
-        std::shared_ptr<ServerMessage> message_pop();
+        std::shared_ptr<ServerMessage> message_front();
 
+        void message_pop();
+
+        void waitForMessage();
+        // Destructor
         ~Server();
     private:
 
@@ -79,9 +81,17 @@ namespace mServer{
 
 
 
+        std::condition_variable cond_message_access;
+        std::mutex lock_message_access;
+
+
         std::queue<std::shared_ptr<ServerMessage>> _message_registry;
 
 
+        // Initialize the master socket for accepting incoming requests
+        int initMasterSocket();
+
+        int startListening();
 
         // Handles if the master receives an incoming request
         int acceptNewIncomingRequest();

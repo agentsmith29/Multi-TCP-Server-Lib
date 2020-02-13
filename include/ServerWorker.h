@@ -91,6 +91,7 @@ namespace mServer {
 
         int notifiyMaster(std::string message);
 
+        std::string bufToString(char* buffer, int len);
     };
 }
 

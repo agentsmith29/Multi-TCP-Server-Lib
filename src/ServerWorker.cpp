@@ -6,7 +6,6 @@
 #include "../include/Notifications.h"
 #include "../include/ServerMessage.h"
 
-#include "../include/Utils.h"
 // Files for Logging
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
@@ -184,8 +183,9 @@ int ServerWorker::serve(std::atomic<bool> &done) {
         if (FD_ISSET(_socket_fd, &_readfds)) {
             if ((valread = read(_socket_fd, buffer, buf_len)) == 0) {
                 // Somebody disconnected , get his details and print
-                handleDisconnectClientRequest();
                 done = true;
+                handleDisconnectClientRequest();
+                delete[] buffer; // Anyway, delete the buffer
                 return 1;
             }
             else {
@@ -193,21 +193,21 @@ int ServerWorker::serve(std::atomic<bool> &done) {
                 // Create a ServerMessage from the Input
                 // Create a new Pointer to a ServerWorker, this will lock the thread!
                 std::string server_recieve = bufToString(buffer, buf_len);
+
+                if(server_recieve.empty())
+                    _logger->error("Message was empty");
+
                 auto svr_msg = std::make_shared<ServerMessage>(this, server_recieve);
 
                 _master_svr->message_push(svr_msg);
                 _logger->debug("Created message {0}-{1} with content {2}",
                         svr_msg->timestamp_str(), svr_msg->messageID_str(),
                         svr_msg->content() );
+                delete[] buffer; // Anyway, delete the buffer
 
-                // Directly echo back
-                std::string respond = "Received message from you! :)\n";
-                auto svr_pop = _master_svr->message_pop();
-                svr_pop->respond(respond); // This will release the lock!
-                buffer[valread] = '\0'; // Only to make sure
             }
         }
-        delete buffer; // Anyway, delete the buffer
+
 
     }
 #pragma clang diagnostic pop
@@ -254,6 +254,24 @@ int ServerWorker::notifiyMaster(std::string message){
     return 0;
 }
 
+std::string ServerWorker::bufToString(char* buffer, int len){
+
+    std::string ret = "";
+    if (buffer == nullptr)
+        throw 1;
+
+    int i = 0;
+    // Search for a nullterminating char
+
+    do{
+        ret += buffer[i++];
+    } while(buffer[i] != '\n');
+
+
+
+    return ret;
+
+}
 
 
 

@@ -23,13 +23,19 @@ std::string& trim(std::string& str, const std::string& chars = "\t\n\v\f\r ")
 }
 
 std::string& bufToString(char* buffer, int len){
+
+    std::string ret = "test";
+    if (buffer == nullptr)
+        throw 1;
+
     int i = 0;
     // Search for a nullterminating char
+    /*
     do{
-        i++;
-    }while(buffer[i] != '\n');
+        ret = buffer[i++];
+    } while(buffer[i] != '\n');
+    */
 
-    std::string ret(buffer, i);
 
     return ret;
 
