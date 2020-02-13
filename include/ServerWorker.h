@@ -14,48 +14,66 @@
 #include <thread>
 #include <chrono>
 #include <netinet/in.h>
+#include "Notifications.h"
 
 namespace mServer{
 
 
     class ServerWorker {
 
-        public:
-            ServerWorker(int worker_id, int socket_descriptor, struct sockaddr_in &address);
+    public:
 
-            bool hasEnded();
+        // Constructor
+        ServerWorker(int worker_id, int socket_fd, struct sockaddr_in &address);
 
-            int getSocketDescriptor() {
-                return _socket_descriptor;
-            };
+        bool hasEnded();
+
+        int initWorker();
 
 
+        // Getter
+        int socket_fds() { return _socket_fd; };
+
+        int notification_fds() { return _notification_fd[0]; };
+
+        int worker_id() { return _worker_id; };
+
+        // Destructor
         ~ServerWorker();
 
-        private:
-            std::string _logger_name = "Generic Logger";
+    private:
+        std::string _logger_name = "Generic Logger";
 
-            int _socket_descriptor = 0;
+        // Initialize with 0,0
+        int _notification_fd[2] = {0, 0};
+        // ID of the worker
+        int _worker_id = 0;
 
-            std::atomic<bool> _done;
+        // Initialize with 0
+        std::atomic<int> _socket_fd{0};
 
-            int _worker_id = 0;
+        // For determining if a thread has ended.
+        std::atomic<bool> _done{false};
 
-            fd_set _readfds;
+        // For logging any kind of messages
+        std::shared_ptr<spdlog::logger> _logger;
 
-            int createLogger();
+        fd_set _readfds;
 
-            //
-            int serve(std::atomic<bool> &done);
+        struct sockaddr_in _address;
 
-            int handleDisconnectClientRequest();
+        std::mutex _lock_disconnect;
 
-            // For logging any kind of messages
-            std::shared_ptr<spdlog::logger> _logger;
+        std::mutex _lock_notify;
 
-            //
 
-            struct sockaddr_in _address;
+        int createLogger();
+
+        int serve(std::atomic<bool> &done);
+
+        int handleDisconnectClientRequest();
+
+        int notifiyMaster(std::string message);
 
     };
 }

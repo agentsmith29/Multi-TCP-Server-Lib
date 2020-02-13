@@ -30,7 +30,7 @@ using std::cout;
 using std::endl;
 
 #define workerholder std::list<std::pair<std::unique_ptr<ServerWorker>, int>>
-workerholder _server_workers; // point
+workerholder _server_worker_registry; // point
 // er/id
 
 Server::Server(int port){
@@ -157,6 +157,7 @@ int Server::initMasterSocket(){
     return _master_socket;
 }
 
+
 int Server::startListening() {
 
     //set of socket descriptors
@@ -169,14 +170,14 @@ int Server::startListening() {
     while(true) {
               // wait for an activity on one of the sockets , timeout is NULL ,
         // so wait indefinitely
-        activity_on_descriptor = select( _master_socket + 1 , &_readfds , NULL , NULL , NULL);
+        activity_on_descriptor = select( _max_sd + 1 , &_readfds , NULL , NULL , NULL);
 
-        //logger->debug("Running Services: {0}", _server_workers.size());
         if ((activity_on_descriptor < 0) && (errno!=EINTR)) {
             _logger->error("Select error: {0}. Code {1}.", strerror(errno), errno);
+            return 0;
         }
         else{
-            _logger->debug("Event received on file set {0}", activity_on_descriptor);
+            _logger->debug("Event received on socket {0}", activity_on_descriptor);
         }
         // If something happened on the master socket ,
         // then its an incoming connection
@@ -184,62 +185,107 @@ int Server::startListening() {
             int new_socket = acceptNewIncomingRequest();
             // A new Request has been made, spwan a Server Receiver
             if(new_socket > 0) {
-
-                int worker_id = _server_workers.size()+1;
-
-                auto requestHandler = std::make_unique<ServerWorker>(worker_id, new_socket, _address);
-
-                _server_workers.push_back(std::make_pair(std::move(requestHandler), worker_id) );
-
-                _logger->error("Registered socket descriptor {0}", new_socket);
+                registerWorkerThread(new_socket);
             }
-
         }
-
-        workerholder::iterator i = _server_workers.begin();
-        while (i != _server_workers.end()) {
-
-            bool hasEnded = (*i).first->hasEnded();
-            if (hasEnded) {
-                _logger->error("Deregister socket descriptor {0}", (*i).first->getSocketDescriptor());
-                _server_workers.erase(i++);  // alternatively, i = items.erase(i);
-            }
-            else
-                ++i;
+        else {
+            updateWorkerRegistry();
         }
+        _logger->debug("Running Services: {0}", _server_worker_registry.size());
 
-
-
-
-
-
-       /* else {
-            for (int i = 0; i < _maximum_clients; i++) {
-                sd = _client_socket[i];
-                if (FD_ISSET(sd, &readfds)) {
-                    if ((valread = read(sd, buffer, 1024)) == 0) {
-                        // Somebody disconnected , get his details and print
-                        _logger->debug("Received disconnect command from client with descriptor {0}", sd);
-                        handleDisconnectClientRequest(sd, i);
-                    } else{
-                        // Echo back the message that came in set the string terminating NULL byte
-                        // on the end of the data read
-                        buffer[valread] = '\0';
-                        _logger->debug("Received {0} from client with descriptor {1}", buffer, sd);
-                        //sendMessage(sd , buffer);
-                    }
-                }
-            }
-
-        } */
-
-        // else its some IO operation on some other socket
 
     }
 #pragma clang diagnostic pop
     return 0;
 }
 
+
+int Server::registerWorkerThread(int socket_descriptor) {
+
+    // TODO: Substitute with generated ID
+    int worker_id = _server_worker_registry.size() + 1;
+
+    // Create a new Pointer to a ServerWorker
+    auto requestHandler = std::make_unique<ServerWorker>(worker_id, socket_descriptor, _address);
+
+    //
+
+    _server_worker_registry.push_back(std::make_pair(std::move(requestHandler), worker_id) );
+    _logger->info("Registered socket descriptor {0} for worker {1}", socket_descriptor, worker_id);
+
+    //clear the socket set and again add the workers stored in the registry
+    refreshDescriptorFileset();
+
+
+
+
+
+
+    return 0;
+}
+
+int Server::updateWorkerRegistry() {
+    int valread;
+    char buffer[1024];
+
+    workerholder::iterator server_worker = _server_worker_registry.begin();
+    while (server_worker != _server_worker_registry.end()) {
+
+        if (FD_ISSET((*server_worker).first->notification_fds(), &_readfds)) {
+            valread = read((*server_worker).first->notification_fds(), buffer, 1024);
+            _logger->debug("Worker {0} notified: {1}", (*server_worker).first->worker_id(), buffer);
+            buffer[0] = '\0';
+        }
+
+        bool hasEnded = (*server_worker).first->hasEnded();
+        int notification_fds = (*server_worker).first->notification_fds();
+        int worker_id = (*server_worker).first->worker_id();
+
+        if (hasEnded) {
+            _logger->error("Deregister worker for socket {0}", worker_id);
+            //clear the socket set and again add the workers stored in the registry
+            _server_worker_registry.erase(server_worker++);
+        }
+        else
+            ++server_worker;
+    }
+
+    refreshDescriptorFileset();
+    return 0;
+}
+
+int Server::refreshDescriptorFileset(){
+
+    _logger->debug("Refreshing registry.");
+    //clear the socket set
+    FD_ZERO(&_readfds);
+
+    // Reregister the master socket
+    FD_SET(_master_socket, &_readfds);
+        _max_sd = _master_socket;
+
+    // Reregister previous opened sockets
+    for (auto& server_worker : _server_worker_registry) {
+
+        bool hasEnded = server_worker.first->hasEnded();
+        int notification_fd = server_worker.first->notification_fds();
+        int worker_id = server_worker.first->worker_id();
+
+        if (!hasEnded) {
+            FD_SET(notification_fd, &_readfds);
+
+            if(notification_fd > _max_sd)
+                _max_sd = notification_fd;
+
+            _logger->debug("Added worker {0} with file set {1} to registry.", worker_id, notification_fd);
+        }
+        else {
+            _logger->info("Worker {0} seems to be stopped! Omitting.", worker_id);
+        }
+    }
+
+    return 0;
+};
 int Server::acceptNewIncomingRequest(){
 
     int new_socket = 0;
@@ -265,18 +311,7 @@ int Server::acceptNewIncomingRequest(){
                        inet_ntoa(_address.sin_addr), ntohs(_address.sin_port));
 
     return new_socket;
-/*
-    //add new socket to array of sockets
-    for (int i = 0; i < _maximum_clients; i++)
-    {
-        //if position is empty
-        if( _client_socket[i] == 0 )
-        {
-            _client_socket[i] = new_socket;
-            break;
-        }
-    }
-*/
+
 }
 
 int Server::handleDisconnectClientRequest(int socket_descriptor, int client_socket_position) {
@@ -296,7 +331,7 @@ int Server::handleDisconnectClientRequest(int socket_descriptor, int client_sock
     close(socket_descriptor);
     // Set the socket at the given position to zero
     _client_socket[client_socket_position] = 0;
-
+    return 0;
 }
 
 

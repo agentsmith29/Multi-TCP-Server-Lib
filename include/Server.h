@@ -65,6 +65,12 @@ namespace mServer{
 
         int handleDisconnectClientRequest(int socket_descriptor, int client_socket_position);
 
+        int registerWorkerThread(int socket_descriptor);
+
+        int updateWorkerRegistry(); // Work pending
+
+        int refreshDescriptorFileset();
+
 
 
 

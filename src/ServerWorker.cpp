@@ -3,6 +3,7 @@
 //
 
 #include "../include/ServerWorker.h"
+#include "../include/Notifications.h"
 
 // Files for Logging
 #include "spdlog/spdlog.h"
@@ -10,11 +11,18 @@
 // import the sinks
 #include "spdlog/sinks/stdout_color_sinks.h"
 #include "spdlog/sinks/basic_file_sink.h" // support for basic file logging
-#include "spdlog/sinks/daily_file_sink.h" // suprt for daily file logging
+#include "spdlog/sinks/daily_file_sink.h" // support for daily file logging
+
+
 
 #include <unistd.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/types.h>
+
 
 
 using namespace mServer;
@@ -24,9 +32,36 @@ using std::endl;
 
 
 
+
+
+
+ServerWorker::ServerWorker(int worker_id, int socket_fd, struct sockaddr_in &address){
+
+    // Assigning
+    _socket_fd = socket_fd;
+    _worker_id = worker_id;
+    _address = address;
+    _done = false;
+
+    // Initialize the worker
+    int result = initWorker();
+
+    // check the initilazation return value
+    if(result == -1) {
+        _done = true;
+        this->~ServerWorker();
+    }
+    else if (result == -2) {
+        notifiyMaster(NTFY_INIT_SVR_ABRT);
+        _done = true;
+        this->~ServerWorker();
+    }
+
+}
+
 int ServerWorker::createLogger(){
 
-    _logger_name = "Svr Worker " + std::to_string(_worker_id);
+    _logger_name = "Server Worker " + std::to_string(_worker_id);
     // Create the logger
     try {
         // Creating loggers with multiple sinks
@@ -43,45 +78,57 @@ int ServerWorker::createLogger(){
     catch(exception &ex){
         cout << ex.what() << endl;
     }
-
+    return 0;
 }
 
-ServerWorker::ServerWorker(int worker_id, int socket_descriptor, struct sockaddr_in &address){
-
-    _socket_descriptor = socket_descriptor;
-    _worker_id = worker_id;
+int ServerWorker::initWorker(){
 
     createLogger();
-    _logger->debug("Worker {0} for descriptor {1} ist warming up...", _worker_id, _socket_descriptor);
+    _logger->debug("Worker {0} for file descriptor {1} ist warming up...", _worker_id, _socket_fd);
 
+    // Open a pipe for notifying the master of incoming events
+    _logger->debug("Opening pipe for notifying master", _worker_id, _socket_fd);
+    int result = pipe(_notification_fd);
+    if (result < 0) {
+        _logger->error("Error opening notification pipe for master: {0}. Code {1}. Aborting.",
+                       strerror(errno), errno);
+        return -1;
+    }
 
-    _address = address;
+    _logger->debug("Register file descriptor {0} to monitor the file.", _socket_fd, _socket_fd);
     //clear the socket set
     FD_ZERO(&_readfds);
     //if valid socket descriptor then add to read list
-    if(socket_descriptor > 0)
-        FD_SET(socket_descriptor, &_readfds);
-    else
-        _logger->error("Descriptor was zero or less!");
+    if (_socket_fd > 0) {
+        FD_SET(_socket_fd, &_readfds);
+    }
+    else {
+        _logger->error("Descriptor was zero or less ({0})!", _socket_fd);
+        return -2;
+    }
 
-    _done = false;
+
     // Starting the listener
-    std::thread t(&ServerWorker::serve, this, std::ref(_done));//
-    _logger->info("Worker {0} is ready!", _worker_id, _socket_descriptor);
+    std::thread t(&ServerWorker::serve, this, std::ref(_done));
 
     // Detach the thread
     t.detach();
-}
+    _logger->info("Worker {0} has started. Ready for incoming connections.", _worker_id);
 
+    _done = false;
+    return 0;
+}
 
 bool ServerWorker::hasEnded() {
 
     // Print status.
     if (_done == true) {
-        _logger->debug("Worker {0} has ended!", _worker_id);
+        _logger->debug("Worker {0} has stopped.", _worker_id);
     }
     return _done;
 }
+
+
 //
 int ServerWorker::serve(std::atomic<bool> &done) {
 
@@ -100,23 +147,17 @@ int ServerWorker::serve(std::atomic<bool> &done) {
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
     while(true) {
         //
-        activity_on_descriptor = select( _socket_descriptor + 1, &_readfds ,
-                NULL , NULL , NULL);
+        done = false;
+        activity_on_descriptor = select(_socket_fd + 1, &_readfds,  NULL , NULL , NULL);
 
         if ((activity_on_descriptor < 0) && (errno!=EINTR)) {
             _logger->error("Select error: {0}. Code {1}.", strerror(errno), errno);
         }
 
-        if (FD_ISSET(_socket_descriptor, &_readfds)) {
-             _logger->debug("Event received!", _socket_descriptor);
-            if ((valread = read(_socket_descriptor, buffer, 1024)) == 0) {
+        if (FD_ISSET(_socket_fd, &_readfds)) {
+            if ((valread = read(_socket_fd, buffer, 1024)) == 0) {
                 // Somebody disconnected , get his details and print
                 handleDisconnectClientRequest();
-                _logger->debug("Received disconnect command on worker {0} (Descriptor is {1})",
-                        _worker_id, _socket_descriptor);
-                // Delete the logger, thread is about to end
-                spdlog::drop(_logger_name);
-                // Set the atomic value to true to get the thread's state
                 done = true;
                 return 1;
             }
@@ -124,7 +165,7 @@ int ServerWorker::serve(std::atomic<bool> &done) {
                 // Echo back the message that came in set the string terminating NULL byte
                 // on the end of the data read
                 buffer[valread] = '\0';
-                _logger->debug("Received [ {0} ] from client with descriptor {1}", buffer, _socket_descriptor);
+                _logger->debug("Received [ {0} ] from client with descriptor {1}", buffer, _socket_fd);
                 //sendMessage(sd , buffer);
             }
         }
@@ -138,22 +179,53 @@ int ServerWorker::serve(std::atomic<bool> &done) {
 
 int ServerWorker::handleDisconnectClientRequest() {
 
+    _lock_disconnect.lock();
+
     int addrlen = sizeof(_address);
 
-    getpeername(_socket_descriptor, (struct sockaddr *) &_address, (socklen_t*) &addrlen);
+    getpeername(_socket_fd, (struct sockaddr *) &_address, (socklen_t*) &addrlen);
 
     // inform user of socket number - used in send and receive commands
     _logger->info("Host {0}:{1} disconnected. Remove descriptor {2}." ,
                   inet_ntoa(_address.sin_addr),
                   ntohs(_address.sin_port),
-                  _socket_descriptor);
+                  _socket_fd);
 
     // Close the socket and mark as 0 in list for reuse
-    close(_socket_descriptor);
+    close(_socket_fd);
+
+    _logger->debug("Received disconnect command on worker {0}/descriptor {1}. Shutting down...",
+                   _worker_id, _socket_fd);
+    // Delete the logger, thread is about to end
+    spdlog::drop(_logger_name);
+
+
+    // Set the atomic value to true to get the thread's state
+
+    notifiyMaster(NTFY_WKR_DISCON_RCV);
+    _lock_disconnect.unlock();
+
     return 0;
 
 }
 
+int ServerWorker::notifiyMaster(std::string message){
+
+    _lock_notify.lock();
+    write(_notification_fd[1], message.c_str(), (strlen(message.c_str()) + 1));
+    _lock_notify.unlock();
+    return 0;
+}
+
+
+
+
+
 ServerWorker::~ServerWorker() {
-    _logger->debug("Worker {0} destroyed!", _worker_id);
+
+
+    _logger->debug("Worker {0} terminated. I'll be back.", _worker_id);
+    close(_notification_fd[1]);
+    close(_notification_fd[0]);
+
 }
