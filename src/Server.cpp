@@ -23,6 +23,8 @@
 #include <thread>
 #include "../include/Utils.h"
 
+#include "include/global_config.h"
+
 class list;
 
 using namespace mServer;
@@ -62,7 +64,10 @@ Server::Server(int port){
     // Create the logger
     createMessage();
 
-    _logger->info("Starting server instance.");
+    _logger->info("Starting server instance. Version {0}.{1}.{2}",
+            PROJECT_VER_MAJOR,
+            PROJECT_VER_MINOR,
+            PROJECT_VER_PATCH);
 
     _client_socket = new int[_maximum_clients];
 
