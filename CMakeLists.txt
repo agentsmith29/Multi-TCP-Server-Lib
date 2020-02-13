@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.2)
 
 
 include_directories(${PROJECT_SOURCE_DIR}/spdlog/include)
+include_directories(${PROJECT_SOURCE_DIR}/boost_1_72_0)
 
 find_library(SPDLOG_LIB spdlog ${PROJECT_SOURCE_DIR}/spdlog/build_x86)
 
@@ -38,7 +39,15 @@ endif()
 #---------------------------------------------------------------------------------------
 add_executable(multiTCPServer
         main.cpp
-        src/Server.cpp src/ServerExceptions.cpp include/ServerExceptions.h include/Utils.h src/ServerWorker.cpp include/ServerWorker.h)
+        src/Server.cpp
+        include/ServerExceptions.hpp
+        include/Utils.h
+        src/ServerWorker.cpp
+        include/ServerWorker.h
+        src/ServerMessage.cpp
+        include/ServerMessage.h
+        src/Utils.cpp
+        include/Utils.h)
 
 target_link_libraries(multiTCPServer
         ${SPDLOG_LIB}

@@ -7,7 +7,7 @@
 #define MULTI_TCP_SERVER_LIB_SERVER_H
 
 #include "spdlog/spdlog.h"
-#include "ServerWorker.h"
+
 
 #include <string>
 #include <memory>
@@ -15,11 +15,20 @@
 #include <queue>
 #include <sys/socket.h>
 #include <arpa/inet.h>
-
+#include "ServerExceptions.hpp"
 
 namespace mServer{
 
+    class ServerMessage;
+
+
+
     class Server{
+
+        PortNotValid PortNotValidException;
+        ServerNotInit ServerNotInitException;
+        DescriptorInvalid DescriptorInvalidException;
+
 
     public:
         Server(int port);
@@ -30,6 +39,16 @@ namespace mServer{
         int startListening();
 
         int startListening_1();
+
+        // Getter
+        int master_socket_fd() {return _master_socket; };
+
+        // Getter
+        sockaddr_in *address() {return &_address; };
+
+        int message_push(std::shared_ptr<ServerMessage> msg);
+
+        std::shared_ptr<ServerMessage> message_pop();
 
         ~Server();
     private:
@@ -53,10 +72,16 @@ namespace mServer{
 
         int _max_sd = 0;
 
-
-
         // Socket address
         struct sockaddr_in _address;
+
+        std::mutex _lock_message_registry;
+
+
+
+        std::queue<std::shared_ptr<ServerMessage>> _message_registry;
+
+
 
         // Handles if the master receives an incoming request
         int acceptNewIncomingRequest();

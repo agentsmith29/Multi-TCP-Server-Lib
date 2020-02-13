@@ -4,7 +4,9 @@
 
 #include "../include/ServerWorker.h"
 #include "../include/Notifications.h"
+#include "../include/ServerMessage.h"
 
+#include "../include/Utils.h"
 // Files for Logging
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
@@ -23,8 +25,6 @@
 #include <unistd.h>
 #include <sys/types.h>
 
-
-
 using namespace mServer;
 using std::exception;
 using std::cout;
@@ -33,8 +33,33 @@ using std::endl;
 
 
 
+ServerWorker::ServerWorker(Server *master_svr, int worker_id, int socket_fd) {
+    _master_svr = master_svr;
+
+    // Assigning
+    _socket_fd = socket_fd;
+    _worker_id = worker_id;
+    _address = *_master_svr->address();
+    _done = false;
+
+    // Initialize the worker
+    int result = initWorker();
+
+    // check the initilazation return value
+    if(result == -1) {
+        _done = true;
+        this->~ServerWorker();
+    }
+    else if (result == -2) {
+        notifiyMaster(NTFY_INIT_SVR_ABRT);
+        _done = true;
+        this->~ServerWorker();
+    }
 
 
+}
+
+/*
 ServerWorker::ServerWorker(int worker_id, int socket_fd, struct sockaddr_in &address){
 
     // Assigning
@@ -58,7 +83,7 @@ ServerWorker::ServerWorker(int worker_id, int socket_fd, struct sockaddr_in &add
     }
 
 }
-
+*/
 int ServerWorker::createLogger(){
 
     _logger_name = "Server Worker " + std::to_string(_worker_id);
@@ -136,8 +161,8 @@ int ServerWorker::serve(std::atomic<bool> &done) {
     int64_t activity_on_descriptor = 0;
 
     int valread = 0;
-
-    char buffer[4096];
+    int buf_len = 4096;
+    //char buffer[4096];
 
 
 
@@ -147,6 +172,8 @@ int ServerWorker::serve(std::atomic<bool> &done) {
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
     while(true) {
         //
+        _lock_thread.lock();
+        char *buffer = new char [buf_len];
         done = false;
         activity_on_descriptor = select(_socket_fd + 1, &_readfds,  NULL , NULL , NULL);
 
@@ -155,22 +182,32 @@ int ServerWorker::serve(std::atomic<bool> &done) {
         }
 
         if (FD_ISSET(_socket_fd, &_readfds)) {
-            if ((valread = read(_socket_fd, buffer, 1024)) == 0) {
+            if ((valread = read(_socket_fd, buffer, buf_len)) == 0) {
                 // Somebody disconnected , get his details and print
                 handleDisconnectClientRequest();
                 done = true;
                 return 1;
             }
             else {
-                // Echo back the message that came in set the string terminating NULL byte
-                // on the end of the data read
-                buffer[valread] = '\0';
-                _logger->debug("Received [ {0} ] from client with descriptor {1}", buffer, _socket_fd);
-                //sendMessage(sd , buffer);
+
+                // Create a ServerMessage from the Input
+                // Create a new Pointer to a ServerWorker, this will lock the thread!
+                std::string server_recieve = bufToString(buffer, buf_len);
+                auto svr_msg = std::make_shared<ServerMessage>(this, server_recieve);
+
+                _master_svr->message_push(svr_msg);
+                _logger->debug("Created message {0}-{1} with content {2}",
+                        svr_msg->timestamp_str(), svr_msg->messageID_str(),
+                        svr_msg->content() );
+
+                // Directly echo back
+                std::string respond = "Received message from you! :)\n";
+                auto svr_pop = _master_svr->message_pop();
+                svr_pop->respond(respond); // This will release the lock!
+                buffer[valread] = '\0'; // Only to make sure
             }
         }
-
-
+        delete buffer; // Anyway, delete the buffer
 
     }
 #pragma clang diagnostic pop

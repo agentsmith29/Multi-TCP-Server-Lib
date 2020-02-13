@@ -7,6 +7,8 @@
 
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
+#include "Server.h"
+
 
 #include <exception>
 #include <iostream>
@@ -14,9 +16,11 @@
 #include <thread>
 #include <chrono>
 #include <netinet/in.h>
+
 #include "Notifications.h"
 
-namespace mServer{
+
+namespace mServer {
 
 
     class ServerWorker {
@@ -24,7 +28,10 @@ namespace mServer{
     public:
 
         // Constructor
-        ServerWorker(int worker_id, int socket_fd, struct sockaddr_in &address);
+        //ServerWorker(int worker_id, int socket_fd, struct sockaddr_in &address);
+
+        // Constructor
+        ServerWorker(Server *master_svr, int worker_id, int socket_fd);
 
         bool hasEnded();
 
@@ -38,10 +45,17 @@ namespace mServer{
 
         int worker_id() { return _worker_id; };
 
+        void lock() { _lock_thread.lock(); };
+
+        void unlock() { _lock_thread.unlock(); };
+
         // Destructor
         ~ServerWorker();
 
     private:
+
+        Server *_master_svr;
+
         std::string _logger_name = "Generic Logger";
 
         // Initialize with 0,0
@@ -65,6 +79,8 @@ namespace mServer{
         std::mutex _lock_disconnect;
 
         std::mutex _lock_notify;
+
+        std::mutex _lock_thread;
 
 
         int createLogger();

@@ -1,6 +1,9 @@
 //
 // Created by developer on 07.02.20.
 //
+#include "../include/Server.h"
+#include "../include/ServerWorker.h"
+#include "../include/ServerMessage.h"
 
 // Files for Logging
 #include "spdlog/spdlog.h"
@@ -10,7 +13,7 @@
 #include "spdlog/sinks/basic_file_sink.h" // support for basic file logging
 #include "spdlog/sinks/daily_file_sink.h" // suprt for daily file logging
 
-#include "../include/ServerExceptions.h"
+#include "../include/ServerExceptions.hpp"
 #include "../include/Server.h"
 
 #include <iostream>
@@ -64,7 +67,7 @@ Server::Server(int port){
 
     if (port < 1 || port > 65535) {
         _logger->error("Port {0} not allowed! Aborting server initialization.", port);
-        throw ErrPortNotValid;
+        throw PortNotValidException;
     }
     else {
         _binding_port = port;
@@ -72,11 +75,16 @@ Server::Server(int port){
 
 
     _logger->info("Opening communication socket on port {0}.", _binding_port);
-    initMasterSocket();
+
+    int result = initMasterSocket();
+
+    if(result < 0){
+        throw ServerNotInitException;
+    }
 
     if (_master_socket <= 0) {
         _logger->error("TCP Server not initialized properly. Exiting.", port);
-        throw ErrSvrNotInit;
+        throw ServerNotInitException;
     }
 
     startListening();
@@ -206,7 +214,7 @@ int Server::registerWorkerThread(int socket_descriptor) {
     int worker_id = _server_worker_registry.size() + 1;
 
     // Create a new Pointer to a ServerWorker
-    auto requestHandler = std::make_unique<ServerWorker>(worker_id, socket_descriptor, _address);
+    auto requestHandler = std::make_unique<ServerWorker>(this, worker_id, socket_descriptor);
 
     //
 
@@ -348,6 +356,21 @@ int Server::sendMessage(int socket_descriptor, std::string message){
     return 0;
 }
 
+int Server::message_push(std::shared_ptr<ServerMessage> msg) {
+    _lock_message_registry.lock();
+    _logger->info("New message {0}-{1} ready for consumption.", msg->timestamp_str(), msg->messageID_str());
+    _message_registry.push(std::move(msg));
+    _lock_message_registry.unlock();
+    return 0;
+}
+
+std::shared_ptr<ServerMessage> Server::message_pop() {
+    _lock_message_registry.lock();
+    auto res =_message_registry.front(); // **************
+    _message_registry.pop();
+    _lock_message_registry.unlock();
+   return res;
+}
 
 
 

@@ -19,7 +19,7 @@ int main() {
 
 
     try {
-        Server communicationServer = Server(8080);
+        Server* communicationServer = new Server(8080);
     }
     catch(exception& e){
         cout << e.what() << endl;

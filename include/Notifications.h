@@ -11,7 +11,7 @@
 #include "string.h"
 
 
-
+/*
 static constexpr int NOTIFICATION_LEVEL_FATAL = 0;
 static constexpr int NOTIFICATION_LEVEL_1 = 1;
 static constexpr int NOTIFICATION_LEVEL_2 = 2;
@@ -45,5 +45,5 @@ private:
 
 };
 
-
+*/
 #endif //MULTITCPSERVER_NOTIFICATIONS_H
